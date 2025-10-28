@@ -1,120 +1,120 @@
-#include <stdio.h>    // 用于 printf
-#include <stdlib.h>   // 用于 exit
-#include <string.h>   // 用于 memcpy, memset
-#include <unistd.h>   // 用于 sleep, write, read, close, fsync
-#include <fcntl.h>    // 用于 open, O_RDONLY, O_WRONLY, O_CREAT
-#include <signal.h>   // 用于 signal
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
 
 /*
- * 这是我们模拟的“进程状态”。
- * 在真实应用中，这可能是数GB的复杂数据。
- * 在我们的模拟中，它只是一个计数器和一些数据。
+ * This structure represents our simulated "process state".
+ * In a real application, this could be gigabytes of complex data.
+ * In our simulation, it’s just a counter and some mock data.
  */
-#define DATA_SIZE 1024 // 1KB 的数据
+#define DATA_SIZE 1024 // 1KB of simulated data
 struct ProcessState {
-    long update_counter;         // 我们总共完成了多少次“工作”
-    char data[DATA_SIZE];      // 模拟的工作数据
+    long update_counter;        // How many units of "work" we have completed
+    char data[DATA_SIZE];       // Simulated working data
 };
 
-// 检查点文件的名字
+// Name of the checkpoint file
 const char* CHECKPOINT_FILE = "checkpoint.dat";
 
-// 信号处理函数，用于优雅地退出 (例如按 Ctrl+C)
+// Signal handler for graceful shutdown (e.g., Ctrl+C)
 void handle_exit(int sig) {
-    printf("\n捕获到退出信号...正在关闭。\n");
+    printf("\nExit signal captured... shutting down.\n");
     exit(0);
 }
 
 /*
- * 函数：保存检查点 (Save Checkpoint)
- * 将内存中的完整状态写入磁盘。
+ * Function: save_checkpoint
+ * Saves the entire process state in memory to disk.
  */
 void save_checkpoint(struct ProcessState *state) {
-    printf("正在保存检查点 (Saving Checkpoint) (计数: %ld)...\n", state->update_counter);
+    printf("Saving checkpoint (count: %ld)...\n", state->update_counter);
     
-    // O_WRONLY: 只写模式
-    // O_CREAT: 如果文件不存在则创建
-    // O_TRUNC: 如果文件已存在，则清空内容
-    // 0644: 文件权限
+    // O_WRONLY: write-only mode
+    // O_CREAT: create the file if it doesn't exist
+    // O_TRUNC: truncate the file if it already exists
+    // 0644: file permissions
     int fd = open(CHECKPOINT_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
-        perror("打开 checkpoint 文件失败");
+        perror("Failed to open checkpoint file");
         return;
     }
 
-    // 1. 将整个结构体写入文件
+    // 1. Write the entire structure to the file
     if (write(fd, state, sizeof(struct ProcessState)) != sizeof(struct ProcessState)) {
-        perror("写入 checkpoint 失败");
+        perror("Failed to write checkpoint");
         close(fd);
         return;
     }
 
-    // 2. [关键] 强制将数据从 OS 缓冲区刷新到物理磁盘！
-    // 这模拟了数据的持久化。
+    // 2. [Important] Force the data from OS buffer to be flushed to physical disk
+    // This simulates persistence.
     fsync(fd); 
     
     close(fd);
-    printf("检查点已保存。\n");
+    printf("Checkpoint saved successfully.\n");
 }
 
 /*
- * 函数：加载检查点 (Load Checkpoint)
- * 在启动时调用，用于恢复状态。
+ * Function: load_checkpoint
+ * Called at startup to restore process state.
  */
 void load_checkpoint(struct ProcessState *state) {
-    printf("尝试从 %s 加载检查点...\n", CHECKPOINT_FILE);
+    printf("Attempting to load checkpoint from %s...\n", CHECKPOINT_FILE);
 
     int fd = open(CHECKPOINT_FILE, O_RDONLY);
     if (fd == -1) {
-        // 文件不存在，这是一个“冷启动”
-        printf("未找到检查点。正在初始化新状态。\n");
+        // File doesn’t exist — this is a “cold start”
+        printf("No checkpoint found. Initializing new state.\n");
         state->update_counter = 0;
-        memset(state->data, 0, DATA_SIZE); // 清空数据
+        memset(state->data, 0, DATA_SIZE); // Clear data
         return;
     }
 
-    // 尝试从文件读取状态
+    // Try to read the state from file
     if (read(fd, state, sizeof(struct ProcessState)) != sizeof(struct ProcessState)) {
-        // 文件可能已损坏或不完整
-        fprintf(stderr, "读取 checkpoint 失败或文件损坏。正在退出。\n");
+        // File might be corrupted or incomplete
+        fprintf(stderr, "Failed to read checkpoint or file corrupted. Exiting.\n");
         close(fd);
         exit(1);
     }
     
     close(fd);
-    printf("成功恢复状态！从计数 %ld 继续。\n", state->update_counter);
+    printf("State restored successfully! Continuing from count %ld.\n", state->update_counter);
 }
 
 
 /*
- * 主函数
+ * Main function
  */
 int main() {
-    // 捕获 Ctrl+C 信号，以便能优雅退出
+    // Capture Ctrl+C signal for graceful shutdown
     signal(SIGINT, handle_exit);
 
     struct ProcessState state;
 
-    // === 1. 恢复 (RECOVERY) ===
-    // 程序启动时，首先尝试加载上一个检查点
+    // === 1. RECOVERY ===
+    // At startup, try to load the last checkpoint
     load_checkpoint(&state);
 
-    // === 2. 模拟工作 (DO WORK) ===
-    // 这是一个无限循环，模拟一个持续运行的进程
+    // === 2. DO WORK ===
+    // Infinite loop simulating a long-running process
     while (1) {
-        // 模拟做一些“工作”
+        // Simulate doing some "work"
         state.update_counter++;
-        state.data[0] = 'A'; // 随便修改一些内存数据
+        state.data[0] = 'A'; // Randomly modify some memory data
         
-        printf("完成工作单元 #%ld\n", state.update_counter);
+        printf("Completed work unit #%ld\n", state.update_counter);
 
-        // === 3. 检查点 (CHECKPOINT) ===
-        // 每完成 10 次工作，就保存一次检查点
+        // === 3. CHECKPOINT ===
+        // Save a checkpoint every 10 units of work
         if (state.update_counter % 10 == 0) {
             save_checkpoint(&state);
         }
         
-        // 慢一点，方便我们观察
+        // Slow down the loop so we can observe the process
         sleep(1);
     }
 
