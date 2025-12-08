@@ -17,7 +17,7 @@ WAL_FILE = 'wal.log'
 memory_state = None
 
 # --- Worker Logic ---
-def worker_process(mem_size_bytes):
+def worker_process(mem_size_bytes, return_dict):
     global memory_state
     
     memory_state = bytearray(mem_size_bytes)
@@ -25,6 +25,10 @@ def worker_process(mem_size_bytes):
 
     transaction_count = 0
     last_report_time = time.time()
+    
+    # [New] Variables for global average throughput calculation
+    total_tx_lifetime = 0
+    start_time_global = time.time()
 
     try:
         with open(WAL_FILE, 'ab', buffering=0) as wal_file:
@@ -57,7 +61,9 @@ def worker_process(mem_size_bytes):
                     wal_file.write(f"COMMIT:{tx_id}\n".encode('utf-8'))
                     # CRITICAL: fsync forces durability. This is the bottleneck.
                     os.fsync(wal_file.fileno())
+                    
                     transaction_count += 1
+                    total_tx_lifetime += 1  # [New] Accumulate total successful transactions
                 else:
                     # ROLLBACK PATH
                     # Active Undo in Memory
@@ -70,8 +76,16 @@ def worker_process(mem_size_bytes):
                 # 3. Throughput Reporting
                 current_time = time.time()
                 if current_time - last_report_time >= 1.0:
+                    # Instantaneous TPS
                     tps = transaction_count / (current_time - last_report_time)
                     print(f"[Worker] Throughput: {tps:.2f} TPS")
+                    
+                    # [New] Calculate and update global average TPS (save to shared dict)
+                    total_duration = current_time - start_time_global
+                    if total_duration > 0:
+                        avg_tps = total_tx_lifetime / total_duration
+                        return_dict['avg_tps'] = avg_tps
+                    
                     transaction_count = 0
                     last_report_time = current_time
 
@@ -158,7 +172,12 @@ if __name__ == "__main__":
     print(f"[Manager] Experiment: Model 1 (WAL-Only)")
     mem_size = MEMORY_SIZE_MB * 1024 * 1024
     
-    p = multiprocessing.Process(target=worker_process, args=(mem_size,))
+    # [New] Use Manager to receive data from child process
+    manager = multiprocessing.Manager()
+    return_dict = manager.dict()
+    
+    # Pass return_dict to worker
+    p = multiprocessing.Process(target=worker_process, args=(mem_size, return_dict))
     p.start()
     
     try:
@@ -169,6 +188,10 @@ if __name__ == "__main__":
         print(f"\n[Manager] Time's up. Simulating CRASH (kill -9)...")
         p.kill()
         p.join()
+        
+        print("\n--- Final Statistics ---")
+        # [New] Output Average TPS at the end
+        print(f"  Average Throughput: {return_dict.get('avg_tps', 0):.2f} TPS")
         
         print("\n--- Storage Stats ---")
         if os.path.exists(WAL_FILE):
